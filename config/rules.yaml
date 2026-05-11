@@ -1,0 +1,171 @@
+# =============================================================================
+# Enquesta Data Quality Agent — Rule Configuration
+# =============================================================================
+# Edit this file to tune the agent's behavior without changing code.
+# Rules are processed in order. Each rule produces zero or more "findings"
+# which the Router Agent then routes to auto-correct / quarantine / flag.
+# =============================================================================
+
+schema:
+  expected_columns:
+    - ACCOUNTNUMBER
+    - ADDR_MAILING_NAME
+    - ADDR_ADDRESS_1
+    - ADDR_CITY
+    - ADDR_STATE
+    - ADDR_ZIP_CODE
+    - CIBL_INVOICE
+    - CIBL_BILLING_DATE
+    - CIBL_CLASS1
+    - CIBL_AMT_5
+    - CIBL_AMT_95
+    - PREM-TAX-PARCEL-ID
+    - CIBL_COMMENTS
+    - CIBL_DUE_DATE
+  expected_column_count: 14
+  delimiter: ","
+
+rules:
+  # ---------------------------------------------------------------------------
+  # RULE 1 — Extra comma in data adds a new column
+  # ---------------------------------------------------------------------------
+  - rule_id: R001
+    name: extra_comma_breaks_schema
+    type: schema_integrity
+    description: >
+      A row contains an extra comma inside a data value (e.g., an address
+      with "Apt 4, Suite B"), causing the row to have more columns than
+      the expected 14. This is the most common Enquesta file defect.
+    detection:
+      method: column_count_check
+      check: row_column_count != schema.expected_column_count
+    severity: high
+    auto_correctable: false   # ambiguous which field has the extra comma
+    action: quarantine
+    example_failure: "Row has 15 fields when only 14 expected"
+
+  # ---------------------------------------------------------------------------
+  # RULE 2 — Trailing-negative amount (legacy mainframe format)
+  # ---------------------------------------------------------------------------
+  - rule_id: R002
+    name: trailing_negative_amount
+    type: format_anomaly
+    description: >
+      Amount fields with negative sign at the end instead of the front,
+      a legacy mainframe convention (e.g., "50.00-" should be "-50.00").
+      The agent can auto-correct this with high confidence.
+    applies_to_columns:
+      - CIBL_AMT_5
+      - CIBL_AMT_95
+    detection:
+      method: regex
+      pattern: '^\d+(\.\d+)?-$'
+    severity: medium
+    auto_correctable: true
+    correction:
+      method: move_sign_to_front
+      description: "Move trailing minus sign to the front of the number"
+      examples:
+        - "50.00-    -> -50.00"
+        - "2000.00-  -> -2000.00"
+        - "12000.00- -> -12000.00"
+    action: auto_correct
+
+  # ---------------------------------------------------------------------------
+  # RULE 3 — CIBIL Comment validity (LLM judgment)
+  # ---------------------------------------------------------------------------
+  - rule_id: R003
+    name: invalid_cibil_comment
+    type: llm_judgment
+    description: >
+      CIBIL_COMMENTS values follow recognized code families when valid, but
+      a meaningful minority are freeform text or data-entry errors. Based on
+      analysis of 4,457 production rows across 206 files, four code families
+      account for ~80% of all comments: IT (invoices), VO (vouchers),
+      PM (payments), and VAC (vacancies). The remaining ~20% includes
+      freeform "BILL #" strings, lowercase English (e.g. "penalty removal"),
+      empty values, and pure digits. The LLM judges these residual cases.
+    applies_to_columns:
+      - CIBL_COMMENTS
+    detection:
+      method: ollama
+      model: llama3.2:3b
+      # Four recognized valid code families.
+      known_good_patterns:
+        - pattern: '^IT\d+$'
+          example: "IT26136535"
+          description: "Standard invoice code"
+        - pattern: '^VO-\d+$'
+          example: "VO-17785"
+          description: "Voucher code"
+        - pattern: '^PM-\d+$'
+          example: "PM-21387"
+          description: "Payment code"
+        - pattern: '^VAC-\d+$'
+          example: "VAC-7631"
+          description: "Vacancy code"
+      known_good_examples:
+        - "IT26136535"      # IT family
+        - "VO-17785"        # VO family
+        - "PM-21387"        # PM family
+        - "VAC-7631"        # VAC family
+      known_bad_examples:
+        - ""                # empty
+        - "TEST"            # placeholder text
+        - "asdfgh"          # gibberish
+        - "N/A"             # not-applicable filler
+        - "penalty removal" # lowercase English freeform
+        - "Ticket removal"  # lowercase English freeform
+      uncertain_examples:
+        # Real values from production — pending business classification.
+        # Move to known_good or known_bad as the billing team confirms.
+        - "VP BILL #: 157031"           # freeform "BILL #" pattern (~3% of rows)
+        - "CIV BILL #: 157838"          # variant freeform pattern
+        - "IT21112989 - 140497"         # composite identifier with dash-suffix
+        - "2603510382"                  # pure digits — looks like parcel ID
+    severity: medium
+    auto_correctable: false      # NEVER auto-correct — humans only
+    confidence_thresholds:
+      flag_for_review: 0.50      # verdict at/above this -> flag + email
+      accept: 0.50               # below -> let through
+    action: flag_or_accept_only  # only two outcomes possible
+    on_flag:
+      notify_email: true
+      include_in_email:
+        - file_name
+        - row_index
+        - account_number
+        - suspicious_value
+        - llm_verdict
+        - llm_confidence
+        - llm_reasoning
+        - audit_log_reference
+
+# =============================================================================
+# Future rules — scoped from real data analysis (206 files / 4,457 rows)
+# Ready to enable once business rules are confirmed with the billing team.
+# =============================================================================
+# Rule 4: duplicate_row_detection
+#   Frequency: 73 of 206 files (35.8%) | 163 duplicate rows total
+#   Same ACCOUNTNUMBER + CIBL_INVOICE + amounts appearing twice in one file
+#   Recommended action: quarantine
+#
+# Rule 5: invalid_state_code
+#   Frequency: 13 of 206 files (6.4%) | 23 rows
+#   Non-US-state values in ADDR_STATE (e.g. "WILMINGTON" — a city)
+#   Recommended action: quarantine (clear data-entry error)
+#
+# Rule 6: invalid_class_format
+#   Frequency: 14 of 206 files (6.9%) | 25 rows
+#   CIBL_CLASS1 values not matching the standard 0000000XXX pattern
+#   (some contain dates like 20251209, some are 3-digit codes)
+#   Recommended action: flag for review
+#
+# Rule 7: empty_or_header_only_file
+#   Frequency: 13 of 206 files (6.3%)
+#   Files with zero data rows — agent should skip gracefully + log
+#
+# Rule 8: missing_required_fields (placeholder)
+# Rule 9: amount_out_of_range (placeholder — needs business threshold)
+# Rule 10: zip_code_format_consistency (placeholder)
+# =============================================================================

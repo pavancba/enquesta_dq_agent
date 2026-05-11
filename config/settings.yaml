@@ -1,0 +1,78 @@
+# =============================================================================
+# Enquesta Data Quality Agent — Runtime Settings
+# =============================================================================
+# Hardware target: MacBook Air M2, 8 GB unified memory
+# =============================================================================
+
+paths:
+  inbox: data/inbox
+  clean: data/clean
+  quarantine: data/quarantine
+  flagged: data/flagged
+  audit_db: audit.db
+  rules_config: config/rules.yaml
+
+llm:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: llama3.2:3b           # tuned for 8GB RAM Macs
+  fallback_model: phi3:mini    # backup if llama3.2 not pulled
+  temperature: 0.1             # low = consistent, deterministic-ish judgments
+  timeout_seconds: 30
+  enabled: true                # set false to use --mock-llm mode
+
+mock_llm:
+  # When llm.enabled = false, the agent uses deterministic mock responses.
+  # Useful for demo-day safety net if Ollama misbehaves.
+  enabled: false
+  default_verdict: suspicious
+  default_confidence: 0.6
+
+router:
+  # Confidence thresholds for the Router Agent's decision logic
+  auto_correct_min_confidence: 0.90
+  quarantine_min_confidence: 0.70
+  # Below quarantine threshold = flag for human review
+
+supervisor:
+  # Trip wires for HITL escalation
+  max_bad_row_ratio: 0.15         # >15% bad rows triggers a hold
+  max_quarantined_per_file: 50    # absolute ceiling
+  notify_on_threshold_breach: true
+
+email:
+  # Email notifications for flagged-for-review rows (Rule 3).
+  # One consolidated email per file run (not per-row spam).
+  enabled: true
+  mode: smtp                      # smtp | mock
+  recipients:
+    - pavan.gali@accelance.io     # demo recipient
+  smtp:
+    # Secrets MUST come from environment variables, never the YAML.
+    # Set these in a .env file (which is gitignored) or your shell:
+    #   export SMTP_HOST=smtp.gmail.com
+    #   export SMTP_PORT=587
+    #   export SMTP_USERNAME=your-sender@gmail.com
+    #   export SMTP_PASSWORD=your-app-password
+    #   export SMTP_FROM_ADDRESS=your-sender@gmail.com
+    host_env: SMTP_HOST
+    port_env: SMTP_PORT
+    use_tls: true
+    username_env: SMTP_USERNAME
+    password_env: SMTP_PASSWORD
+    from_address_env: SMTP_FROM_ADDRESS
+  mock:
+    # When mode = mock, emails are written as .eml files for inspection
+    output_dir: data/sent_emails
+  subject_template: "[Enquesta DQ] {flagged_count} rows flagged for review — {file_name}"
+
+audit:
+  # Every event, decision, correction is logged
+  log_level: INFO
+  retain_days: 90
+
+demo:
+  # Settings that make the demo experience smoother
+  preload_ollama_on_start: true
+  show_llm_reasoning_in_ui: true
+  sample_file_path: samples/LIbillprint_sample.csv

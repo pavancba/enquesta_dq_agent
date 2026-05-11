@@ -1,0 +1,29 @@
+# Enquesta Data Quality Agent — requirements
+# Tested on Python 3.11, Apple Silicon M2
+
+# Core
+pandas==2.2.2
+pydantic==2.7.1
+pyyaml==6.0.1
+python-dateutil==2.9.0
+
+# Agent orchestration
+langgraph==0.2.16
+langchain-core==0.3.0
+
+# Local LLM
+ollama==0.3.0
+
+# Email + env management
+python-dotenv==1.0.1
+# smtplib is part of Python standard library — no install needed
+
+# UI
+streamlit==1.36.0
+
+# Audit / storage
+# sqlite3 is part of Python standard library — no install needed
+
+# Dev / testing
+pytest==8.2.0
+pytest-asyncio==0.23.7
