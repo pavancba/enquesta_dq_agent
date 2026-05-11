@@ -1,29 +1,33 @@
 # Enquesta Data Quality Agent — requirements
-# Tested on Python 3.11, Apple Silicon M2
+# Tested on Python 3.13.x, Apple Silicon M2
+#
+# All versions below are confirmed Python 3.13 compatible.
+# Lower bounds are pinned; minor upgrades within the range are fine.
 
-# Core
-pandas==2.2.2
-pydantic==2.7.1
-pyyaml==6.0.1
-python-dateutil==2.9.0
+# Core data handling
+pandas>=2.2.3,<3.0          # 2.2.3 was first pandas release with 3.13 wheels
+pydantic>=2.9,<3.0          # 2.9+ supports 3.13
+pyyaml>=6.0.2,<7.0          # 6.0.2 has 3.13 wheels
+python-dateutil>=2.9.0
 
 # Agent orchestration
-langgraph==0.2.16
-langchain-core==0.3.0
+# LangGraph 1.0+ ships 3.13 wheels and is API-stable
+langgraph>=1.0,<2.0
+langchain-core>=0.3,<1.0
 
 # Local LLM
-ollama==0.3.0
+ollama>=0.4.0,<1.0          # 0.4+ tested on 3.13
 
 # Email + env management
-python-dotenv==1.0.1
+python-dotenv>=1.0.1
 # smtplib is part of Python standard library — no install needed
 
 # UI
-streamlit==1.36.0
+streamlit>=1.39,<2.0        # 1.39+ supports 3.13
 
 # Audit / storage
 # sqlite3 is part of Python standard library — no install needed
 
 # Dev / testing
-pytest==8.2.0
-pytest-asyncio==0.23.7
+pytest>=8.3,<9.0
+pytest-asyncio>=0.24,<1.0
