@@ -31,6 +31,9 @@ data/sent_emails/*
 !data/flagged/.gitkeep
 !data/sent_emails/.gitkeep
 
+# Local diagnostic scripts — one-offs, not source
+scripts/
+
 # Logs
 *.log
 logs/
