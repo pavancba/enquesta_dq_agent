@@ -20,6 +20,9 @@ env/
 *.swp
 .DS_Store
 
+# Claude Code session state (local working dir, not source)
+.claude/
+
 # Runtime artifacts (these are generated, not source)
 audit.db
 data/clean/*
