@@ -317,6 +317,48 @@ class AuditLogger:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_findings_summary(self, run_id: str) -> list[dict]:
+        """Per-rule finding counts for one run. Used by report_generator."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT rule_id, rule_name, severity, COUNT(*) AS count "
+                "FROM findings WHERE run_id = ? "
+                "GROUP BY rule_id, rule_name, severity "
+                "ORDER BY rule_id, severity",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_corrections_summary(self, run_id: str) -> list[dict]:
+        """Per-(rule, column) correction counts for one run."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT rule_id, column_name, COUNT(*) AS count "
+                "FROM corrections WHERE run_id = ? "
+                "GROUP BY rule_id, column_name "
+                "ORDER BY rule_id, column_name",
+                (run_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_llm_summary(self, run_id: str) -> dict:
+        """Total/avg latency of LLM calls for one run. Returns zeroed dict if none."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count, "
+                "       COALESCE(SUM(latency_ms), 0) AS total_ms, "
+                "       COALESCE(AVG(latency_ms), 0) AS avg_ms "
+                "FROM llm_calls WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                return {"count": 0, "total_ms": 0, "avg_ms": 0.0}
+            return {
+                "count": int(row["count"]),
+                "total_ms": int(row["total_ms"]),
+                "avg_ms": float(row["avg_ms"]),
+            }
+
 
 # ---------------------------------------------------------------------------
 # Self-test — run with:  python -m src.audit.audit_logger
