@@ -35,9 +35,14 @@ router:
   # Below quarantine threshold = flag for human review
 
 supervisor:
-  # Trip wires for HITL escalation
-  max_bad_row_ratio: 0.15         # >15% bad rows triggers a hold
-  max_quarantined_per_file: 50    # absolute ceiling
+  # Trip wires — quarantine (data integrity) and flag (LLM workload) are
+  # tracked separately. Flag-only excess does NOT trigger HITL hold, since
+  # flagged rows are reviewable by the billing team via the notifier email.
+  max_quarantine_ratio: 0.15         # >15% rows quarantined -> elevated
+  max_quarantined_per_file: 50       # absolute ceiling on quarantined count
+  max_flag_ratio: 0.30               # >30% rows flagged -> elevated
+  max_flagged_per_file: 30           # absolute ceiling on flagged count
+  hitl_quarantine_ratio: 0.50        # quarantine ratio above this -> HITL
   notify_on_threshold_breach: true
 
 email:

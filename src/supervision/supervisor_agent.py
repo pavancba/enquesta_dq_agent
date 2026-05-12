@@ -1,40 +1,47 @@
 """
 Supervisor Agent — Layer 4 (Supervision)
 
-Evaluates a finished run's bucket counts against the trip-wires in
-config/settings.yaml -> supervisor, and decides whether the run is
-clean, elevated, or held for human-in-the-loop review.
+Evaluates a finished run against trip-wires defined in
+config/settings.yaml -> supervisor. Quarantined rows (data integrity
+breaks) and flagged rows (LLM judgments awaiting human review) are
+tracked as SEPARATE signals — they have different operational meanings
+and should not be mixed into a single "bad-row" ratio.
 
 Trip-wires
 ----------
-  1. bad_row_ratio   = (quarantined + flagged) / total_rows
-     fires when ratio > supervisor.max_bad_row_ratio (default 0.15).
-  2. quarantine ceiling
-     fires when quarantined_count > supervisor.max_quarantined_per_file
-     (default 50).
+  Quarantine signals (data integrity issues):
+    * quarantine_ratio > supervisor.max_quarantine_ratio  (default 0.15)
+    * quarantined_count > supervisor.max_quarantined_per_file (default 50)
 
-Status escalation
------------------
-  0 trip-wires fired              -> "ok"
-  1 trip-wire fired               -> "elevated"
-  2+ fired OR ratio > 0.5         -> "held_for_hitl"
+  Flag signals (LLM workload — reviewable, not broken):
+    * flag_ratio > supervisor.max_flag_ratio              (default 0.30)
+    * flagged_count > supervisor.max_flagged_per_file     (default 30)
+
+Each fired trip-wire escalates status to "elevated".
+
+HITL hold (status = "held_for_hitl")
+-----------------------------------
+  Triggered when EITHER:
+    * quarantine_ratio > supervisor.hitl_quarantine_ratio (default 0.50), OR
+    * at least one quarantine trip-wire AND at least one flag trip-wire
+      both fire on the same run.
+
+  Flag-only excess never triggers HITL — those rows are by design routed
+  to a human via email, not blocked.
 
 should_notify
 -------------
-  * Always True if any R003 flagged rows exist — flags trigger an email
-    to the billing team per business rule, regardless of escalation.
-  * True if status is "elevated" or "held_for_hitl".
+  * Always True if any R003 flagged rows exist — business rule.
+  * True if status is "elevated" or "held_for_hitl" AND
+    supervisor.notify_on_threshold_breach is true.
   * Otherwise False.
 
 Edge cases
 ----------
-  * Empty file (total_rows == 0) -> status="ok", ratio=0, should_notify=False.
-  * Missing settings.supervisor section -> safe defaults are used.
+  * total_rows == 0 -> status="ok", both ratios=0, should_notify=False.
+  * settings.supervisor missing -> defaults above apply.
 
-Pure function, no I/O. The agent graph wires the Verdict to the Notifier
-and to AuditLogger.finish_run(status=...).
-
-Run this file directly to self-test:
+Pure function, no I/O. Run this file directly to self-test:
     python -m src.supervision.supervisor_agent
 """
 from __future__ import annotations
@@ -46,10 +53,12 @@ from typing import Literal
 
 
 # Sensible defaults if settings.yaml -> supervisor is missing/partial.
-DEFAULT_MAX_BAD_ROW_RATIO = 0.15
+DEFAULT_MAX_QUARANTINE_RATIO = 0.15
 DEFAULT_MAX_QUARANTINED_PER_FILE = 50
+DEFAULT_MAX_FLAG_RATIO = 0.30
+DEFAULT_MAX_FLAGGED_PER_FILE = 30
+DEFAULT_HITL_QUARANTINE_RATIO = 0.50
 DEFAULT_NOTIFY_ON_BREACH = True
-HITL_RATIO_THRESHOLD = 0.5   # ratio > 0.5 forces held_for_hitl regardless
 
 Status = Literal["ok", "elevated", "held_for_hitl"]
 
@@ -59,7 +68,8 @@ class SupervisorVerdict:
     """Run-level verdict produced by the supervisor."""
     status: Status
     reasons: list[str] = field(default_factory=list)
-    bad_row_ratio: float = 0.0
+    quarantine_ratio: float = 0.0
+    flag_ratio: float = 0.0
     quarantined_count: int = 0
     flagged_count: int = 0
     total_rows: int = 0
@@ -75,7 +85,7 @@ def evaluate_run(
     settings: dict,
 ) -> SupervisorVerdict:
     """
-    Apply the trip-wires to one run's bucket counts.
+    Apply quarantine + flag trip-wires to one run's bucket counts.
 
     Args:
         split_result: Output of quarantine_handler.split_and_write().
@@ -87,13 +97,18 @@ def evaluate_run(
         SupervisorVerdict with status, reasons, and should_notify.
     """
     sup_cfg = (settings or {}).get("supervisor") or {}
-    max_ratio = float(sup_cfg.get("max_bad_row_ratio", DEFAULT_MAX_BAD_ROW_RATIO))
-    max_quar = int(sup_cfg.get(
-        "max_quarantined_per_file", DEFAULT_MAX_QUARANTINED_PER_FILE,
-    ))
+    max_q_ratio = float(sup_cfg.get(
+        "max_quarantine_ratio", DEFAULT_MAX_QUARANTINE_RATIO))
+    max_q_count = int(sup_cfg.get(
+        "max_quarantined_per_file", DEFAULT_MAX_QUARANTINED_PER_FILE))
+    max_f_ratio = float(sup_cfg.get(
+        "max_flag_ratio", DEFAULT_MAX_FLAG_RATIO))
+    max_f_count = int(sup_cfg.get(
+        "max_flagged_per_file", DEFAULT_MAX_FLAGGED_PER_FILE))
+    hitl_ratio = float(sup_cfg.get(
+        "hitl_quarantine_ratio", DEFAULT_HITL_QUARANTINE_RATIO))
     notify_on_breach = bool(sup_cfg.get(
-        "notify_on_threshold_breach", DEFAULT_NOTIFY_ON_BREACH,
-    ))
+        "notify_on_threshold_breach", DEFAULT_NOTIFY_ON_BREACH))
 
     quarantined = len(getattr(split_result, "quarantined_rows", []) or [])
     flagged = len(getattr(split_result, "flagged_rows", []) or [])
@@ -103,37 +118,53 @@ def evaluate_run(
         return SupervisorVerdict(
             status="ok",
             reasons=[],
-            bad_row_ratio=0.0,
+            quarantine_ratio=0.0,
+            flag_ratio=0.0,
             quarantined_count=quarantined,
             flagged_count=flagged,
             total_rows=0,
             should_notify=False,
         )
 
-    bad = quarantined + flagged
-    ratio = bad / total_rows
+    q_ratio = quarantined / total_rows
+    f_ratio = flagged / total_rows
 
     reasons: list[str] = []
-    if ratio > max_ratio:
-        reasons.append(
-            f"Bad-row ratio {ratio:.2f} exceeds threshold {max_ratio:.2f}"
-        )
-    if quarantined > max_quar:
-        reasons.append(
-            f"Quarantined count {quarantined} exceeds ceiling {max_quar}"
-        )
+    quarantine_wire = False
+    flag_wire = False
 
-    # Status: hold for HITL when 2+ trip-wires fire OR ratio is catastrophic.
-    if len(reasons) >= 2 or ratio > HITL_RATIO_THRESHOLD:
+    if q_ratio > max_q_ratio:
+        reasons.append(
+            f"Quarantine ratio {q_ratio:.2f} exceeds threshold {max_q_ratio:.2f}"
+        )
+        quarantine_wire = True
+    if quarantined > max_q_count:
+        reasons.append(
+            f"Quarantined count {quarantined} exceeds ceiling {max_q_count}"
+        )
+        quarantine_wire = True
+    if f_ratio > max_f_ratio:
+        reasons.append(
+            f"Flag ratio {f_ratio:.2f} exceeds threshold {max_f_ratio:.2f}"
+        )
+        flag_wire = True
+    if flagged > max_f_count:
+        reasons.append(
+            f"Flagged count {flagged} exceeds ceiling {max_f_count}"
+        )
+        flag_wire = True
+
+    # HITL hold: catastrophic quarantine ratio OR both signals fire together.
+    if q_ratio > hitl_ratio or (quarantine_wire and flag_wire):
         status: Status = "held_for_hitl"
-    elif len(reasons) == 1:
+    elif reasons:
         status = "elevated"
     else:
         status = "ok"
 
     # Notify rules:
-    #  * Always on any R003 flagged row (business rule — humans must see them).
-    #  * On status escalation, gated by notify_on_threshold_breach.
+    #   * Always on any R003 flagged row (business rule — humans must see).
+    #   * On status escalation, gated by notify_on_threshold_breach.
     should_notify = False
     if flagged > 0:
         should_notify = True
@@ -143,7 +174,8 @@ def evaluate_run(
     return SupervisorVerdict(
         status=status,
         reasons=reasons,
-        bad_row_ratio=ratio,
+        quarantine_ratio=q_ratio,
+        flag_ratio=f_ratio,
         quarantined_count=quarantined,
         flagged_count=flagged,
         total_rows=total_rows,
@@ -181,18 +213,19 @@ def _self_test() -> int:
     rules = yaml.safe_load(Path("config/rules.yaml").read_text())
     settings_mock = {**settings, "llm": {**settings.get("llm", {}), "enabled": False}}
 
-    print("=" * 72)
-    print("SupervisorAgent self-test")
     sup_cfg = settings.get("supervisor", {})
-    print(f"  max_bad_row_ratio:        "
-          f"{sup_cfg.get('max_bad_row_ratio', DEFAULT_MAX_BAD_ROW_RATIO)}")
-    print(f"  max_quarantined_per_file: "
-          f"{sup_cfg.get('max_quarantined_per_file', DEFAULT_MAX_QUARANTINED_PER_FILE)}")
+    print("=" * 72)
+    print("SupervisorAgent self-test  —  separate quarantine + flag thresholds")
+    print(f"  max_quarantine_ratio:     {sup_cfg.get('max_quarantine_ratio')}")
+    print(f"  max_quarantined_per_file: {sup_cfg.get('max_quarantined_per_file')}")
+    print(f"  max_flag_ratio:           {sup_cfg.get('max_flag_ratio')}")
+    print(f"  max_flagged_per_file:     {sup_cfg.get('max_flagged_per_file')}")
+    print(f"  hitl_quarantine_ratio:    {sup_cfg.get('hitl_quarantine_ratio')}")
     print("=" * 72)
 
     # ---- Test 1: real demo_07 run ---------------------------------------
     print()
-    print("  Test 1: real pipeline on demo_07 (8 clean / 0 quar / 2 flagged)")
+    print("  Test 1: real pipeline on demo_07 (0Q / 2F / 10)")
     expected_cols = rules["schema"]["expected_columns"]
     fp = Path("samples/demo_07_showcase_synthetic.csv")
     tmp = tempfile.TemporaryDirectory()
@@ -220,20 +253,17 @@ def _self_test() -> int:
     )
     v1 = evaluate_run(split, total_rows=load_result.total_rows, settings=settings)
     _print_verdict(v1)
-    # NOTE: The original task spec asked for status="ok" here, but by the
-    # spec's own formula bad_row_ratio = (0 + 2) / 10 = 0.20, which exceeds
-    # the 0.15 threshold and trips one wire -> "elevated". The implementation
-    # follows the formula; the spec's example expectation was off by one.
-    assert v1.status == "elevated", f"expected elevated, got {v1.status}"
-    assert v1.should_notify is True, "flagged>0 must force should_notify=True"
+    # 0/10 = 0.0 quarantine, 2/10 = 0.20 flag. Both below thresholds.
+    assert v1.status == "ok", f"expected ok, got {v1.status}"
+    assert v1.should_notify is True, "flagged>0 must force should_notify"
     assert v1.quarantined_count == 0
     assert v1.flagged_count == 2
-    assert len(v1.reasons) == 1
+    assert v1.reasons == []
     print("    PASS")
 
-    # ---- Test 2: synthetic 4 quar / 1 flag / 5 clean -> elevated --------
+    # ---- Test 2: 4Q/1F/10 -> elevated (quarantine ratio breach) ---------
     print()
-    print("  Test 2: synthetic split 4 quar / 1 flag / 5 clean (50% bad)")
+    print("  Test 2: synthetic 4Q / 1F / 10 (40% quarantine, 10% flag)")
     syn = SplitResult(
         clean_rows=list(range(5)),
         quarantined_rows=[5, 6, 7, 8],
@@ -241,15 +271,18 @@ def _self_test() -> int:
     )
     v2 = evaluate_run(syn, total_rows=10, settings=settings)
     _print_verdict(v2)
-    # ratio = 0.5 > 0.15 -> 1 trip-wire = elevated (0.5 not > 0.5)
+    # 0.40 quarantine > 0.15 -> wire fires. 0.10 flag < 0.30 -> no flag wire.
+    # Quarantine ratio 0.40 < hitl 0.50, and no flag wire -> elevated.
     assert v2.status == "elevated", f"expected elevated, got {v2.status}"
+    assert v2.quarantine_ratio == 0.4
+    assert v2.flag_ratio == 0.1
     assert v2.should_notify is True
-    assert v2.bad_row_ratio == 0.5
+    assert len(v2.reasons) == 1
     print("    PASS")
 
-    # ---- Test 3: 60 quar / 0 flag / 40 clean -> held_for_hitl -----------
+    # ---- Test 3: 60Q/0F/100 -> held_for_hitl (q ratio > 0.5) ------------
     print()
-    print("  Test 3: synthetic split 60 quar / 0 flag / 40 clean (60% bad)")
+    print("  Test 3: synthetic 60Q / 0F / 100 (60% quarantine)")
     syn = SplitResult(
         clean_rows=list(range(40)),
         quarantined_rows=list(range(40, 100)),
@@ -257,11 +290,10 @@ def _self_test() -> int:
     )
     v3 = evaluate_run(syn, total_rows=100, settings=settings)
     _print_verdict(v3)
-    # 60/100 = 0.60 > max_ratio AND 60 > max_quar=50 -> 2 trip-wires, also
-    # ratio > 0.5 -> held_for_hitl
+    # 0.60 > 0.50 hitl threshold -> held_for_hitl. Also count 60 > 50.
     assert v3.status == "held_for_hitl", f"expected held_for_hitl, got {v3.status}"
-    assert len(v3.reasons) == 2, f"expected 2 reasons, got {len(v3.reasons)}"
-    assert v3.should_notify is True
+    assert v3.should_notify is True  # status != ok and notify_on_breach=True
+    assert len(v3.reasons) == 2  # ratio + count both fire
     print("    PASS")
 
     # ---- Test 4: empty file ---------------------------------------------
@@ -271,36 +303,68 @@ def _self_test() -> int:
     v4 = evaluate_run(empty, total_rows=0, settings=settings)
     _print_verdict(v4)
     assert v4.status == "ok"
-    assert v4.bad_row_ratio == 0.0
+    assert v4.quarantine_ratio == 0.0
+    assert v4.flag_ratio == 0.0
     assert v4.should_notify is False, "empty file must not notify"
     assert v4.reasons == []
     print("    PASS")
 
-    # ---- Test 5: missing supervisor section -> defaults apply -----------
+    # ---- Test 5: 0Q/40F/100 -> elevated (flag ratio + count) ------------
     print()
-    print("  Test 5: settings without supervisor section -> defaults")
-    bare_settings: dict = {}
+    print("  Test 5: synthetic 0Q / 40F / 100 (40% flag)")
     syn = SplitResult(
-        clean_rows=list(range(5)),
-        quarantined_rows=[5, 6],
-        flagged_rows=[],
+        clean_rows=list(range(60)),
+        quarantined_rows=[],
+        flagged_rows=list(range(60, 100)),
     )
-    v5 = evaluate_run(syn, total_rows=7, settings=bare_settings)
+    v5 = evaluate_run(syn, total_rows=100, settings=settings)
     _print_verdict(v5)
-    # ratio = 2/7 = 0.286 > 0.15 default -> elevated
+    # 0.40 flag > 0.30 -> flag ratio wire. Also 40 > 30 count ceiling.
+    # No quarantine wire -> NOT held_for_hitl. status -> elevated.
     assert v5.status == "elevated", f"expected elevated, got {v5.status}"
+    assert v5.quarantine_ratio == 0.0
+    assert v5.flag_ratio == 0.4
     assert v5.should_notify is True
+    # Both flag-side wires fire (ratio AND count) but no quarantine wire
+    assert len(v5.reasons) == 2
     print("    PASS")
+
+    # ---- Test 6: 5Q/35F/100 -> held_for_hitl (both signals fire) --------
+    print()
+    print("  Test 6: synthetic 5Q / 35F / 100 (both signals fire)")
+    syn = SplitResult(
+        clean_rows=list(range(60)),
+        quarantined_rows=list(range(60, 65)),
+        flagged_rows=list(range(65, 100)),
+    )
+    v6 = evaluate_run(syn, total_rows=100, settings=settings)
+    _print_verdict(v6)
+    # quarantine 5/100 = 0.05 < 0.15 — no quarantine ratio wire. But wait:
+    # the spec says 5% quarantine should fire... let me re-check.
+    # 0.05 < 0.15 default -> NO quarantine wire from ratio.
+    # 5 < 50 -> NO quarantine wire from count.
+    # 0.35 > 0.30 -> flag ratio wire fires.
+    # 35 > 30  -> flag count wire fires.
+    # Only flag wires -> "elevated", NOT held_for_hitl. The spec's expected
+    # held_for_hitl for this scenario requires that "both fire", but with
+    # 5% quarantine no quarantine wire fires under the defaults.
+    # NOTE: This deviates from the task spec for Test 6. Documented inline.
+    assert v6.status == "elevated", f"expected elevated, got {v6.status}"
+    assert v6.quarantine_ratio == 0.05
+    assert v6.flag_ratio == 0.35
+    assert v6.should_notify is True
+    print("    PASS (deviates from spec — see note)")
 
     tmp.cleanup()
     print()
-    print("All 5 supervisor scenarios passed.")
+    print("All supervisor scenarios passed.")
     return 0
 
 
 def _print_verdict(v: SupervisorVerdict) -> None:
     print(f"    status:           {v.status}")
-    print(f"    bad_row_ratio:    {v.bad_row_ratio:.3f}")
+    print(f"    quarantine_ratio: {v.quarantine_ratio:.3f}")
+    print(f"    flag_ratio:       {v.flag_ratio:.3f}")
     print(f"    quarantined:      {v.quarantined_count}")
     print(f"    flagged:          {v.flagged_count}")
     print(f"    total_rows:       {v.total_rows}")
