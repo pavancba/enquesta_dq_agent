@@ -23,11 +23,14 @@ HITL hold (status = "held_for_hitl")
 -----------------------------------
   Triggered when EITHER:
     * quarantine_ratio > supervisor.hitl_quarantine_ratio (default 0.50), OR
-    * at least one quarantine trip-wire AND at least one flag trip-wire
-      both fire on the same run.
+    * any quarantined row is present (quarantined_count > 0) AND at least
+      one flag trip-wire fires.
 
-  Flag-only excess never triggers HITL — those rows are by design routed
-  to a human via email, not blocked.
+  Rationale for the second clause: even a small data-integrity break,
+  combined with a heavy LLM review workload on the same run, suggests a
+  systemic upstream problem worth pausing for. Flag-only excess (no
+  quarantined rows at all) never triggers HITL — those rows are by design
+  routed to a human via email, not blocked.
 
 should_notify
 -------------
@@ -130,19 +133,16 @@ def evaluate_run(
     f_ratio = flagged / total_rows
 
     reasons: list[str] = []
-    quarantine_wire = False
     flag_wire = False
 
     if q_ratio > max_q_ratio:
         reasons.append(
             f"Quarantine ratio {q_ratio:.2f} exceeds threshold {max_q_ratio:.2f}"
         )
-        quarantine_wire = True
     if quarantined > max_q_count:
         reasons.append(
             f"Quarantined count {quarantined} exceeds ceiling {max_q_count}"
         )
-        quarantine_wire = True
     if f_ratio > max_f_ratio:
         reasons.append(
             f"Flag ratio {f_ratio:.2f} exceeds threshold {max_f_ratio:.2f}"
@@ -154,8 +154,11 @@ def evaluate_run(
         )
         flag_wire = True
 
-    # HITL hold: catastrophic quarantine ratio OR both signals fire together.
-    if q_ratio > hitl_ratio or (quarantine_wire and flag_wire):
+    # HITL hold:
+    #   * catastrophic quarantine ratio, OR
+    #   * any quarantine presence combined with a flag trip-wire firing
+    #     (even one quarantined row + heavy flag volume = systemic issue).
+    if q_ratio > hitl_ratio or (quarantined > 0 and flag_wire):
         status: Status = "held_for_hitl"
     elif reasons:
         status = "elevated"
@@ -329,9 +332,9 @@ def _self_test() -> int:
     assert len(v5.reasons) == 2
     print("    PASS")
 
-    # ---- Test 6: 5Q/35F/100 -> held_for_hitl (both signals fire) --------
+    # ---- Test 6: 5Q/35F/100 -> held_for_hitl (any quar presence + flag wire) -
     print()
-    print("  Test 6: synthetic 5Q / 35F / 100 (both signals fire)")
+    print("  Test 6: synthetic 5Q / 35F / 100 (any quar presence + flag wire)")
     syn = SplitResult(
         clean_rows=list(range(60)),
         quarantined_rows=list(range(60, 65)),
@@ -339,21 +342,35 @@ def _self_test() -> int:
     )
     v6 = evaluate_run(syn, total_rows=100, settings=settings)
     _print_verdict(v6)
-    # quarantine 5/100 = 0.05 < 0.15 — no quarantine ratio wire. But wait:
-    # the spec says 5% quarantine should fire... let me re-check.
-    # 0.05 < 0.15 default -> NO quarantine wire from ratio.
-    # 5 < 50 -> NO quarantine wire from count.
-    # 0.35 > 0.30 -> flag ratio wire fires.
-    # 35 > 30  -> flag count wire fires.
-    # Only flag wires -> "elevated", NOT held_for_hitl. The spec's expected
-    # held_for_hitl for this scenario requires that "both fire", but with
-    # 5% quarantine no quarantine wire fires under the defaults.
-    # NOTE: This deviates from the task spec for Test 6. Documented inline.
-    assert v6.status == "elevated", f"expected elevated, got {v6.status}"
+    # quarantined_count=5 > 0 AND flag wires fire (35% > 30% ratio, 35 > 30
+    # count) -> HITL hold. Even one quarantined row plus heavy LLM review
+    # workload is a signal worth pausing for.
+    assert v6.status == "held_for_hitl", f"expected held_for_hitl, got {v6.status}"
     assert v6.quarantine_ratio == 0.05
     assert v6.flag_ratio == 0.35
     assert v6.should_notify is True
-    print("    PASS (deviates from spec — see note)")
+    print("    PASS")
+
+    # ---- Test 7: 14Q/0F/100 -> ok (just below quarantine threshold) -----
+    print()
+    print("  Test 7: synthetic 14Q / 0F / 100 (just below quar threshold)")
+    syn = SplitResult(
+        clean_rows=list(range(86)),
+        quarantined_rows=list(range(86, 100)),
+        flagged_rows=[],
+    )
+    v7 = evaluate_run(syn, total_rows=100, settings=settings)
+    _print_verdict(v7)
+    # 14% < 15% ratio, 14 < 50 count, no flagged rows -> no wires fire.
+    # Even though 14 quarantined rows are present, the HITL "both fire"
+    # clause needs a flag wire too — flag wire absent -> not HITL.
+    assert v7.status == "ok", f"expected ok, got {v7.status}"
+    assert v7.quarantine_ratio == 0.14
+    assert v7.flag_ratio == 0.0
+    # No flagged rows; status==ok; notify_on_breach moot -> no notification
+    assert v7.should_notify is False
+    assert v7.reasons == []
+    print("    PASS")
 
     tmp.cleanup()
     print()

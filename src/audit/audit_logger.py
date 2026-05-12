@@ -261,9 +261,22 @@ class AuditLogger:
         auto_corrected: int,
         quarantined: int,
         flagged: int,
-        status: str = "completed",
+        status: str = "ok",
     ) -> None:
-        """Mark a run complete with its final counts."""
+        """
+        Mark a run complete with its final counts.
+
+        Valid status values:
+            'in_progress'    — set by start_run, should not appear here
+            'ok'             — clean run, no trip-wires fired
+            'elevated'       — at least one supervisor trip-wire fired
+            'held_for_hitl'  — supervisor escalated for human review
+            'failed'         — run aborted due to error
+
+        The supervisor's verdict drives this field directly; do not pass
+        'completed' (legacy value, retired in favor of the supervisor
+        vocabulary).
+        """
         with self._conn() as conn:
             conn.execute(
                 "UPDATE file_runs SET "
@@ -366,12 +379,13 @@ def _self_test() -> int:
         )
         print("[6] Logged LLM call (Rule 3 judgment)")
 
-        # Finish the run
+        # Finish the run with the new supervisor-aligned status vocabulary
         logger.finish_run(
             run_id=run_id,
             total_rows=10, auto_corrected=1, quarantined=0, flagged=1,
+            status="ok",
         )
-        print("[7] Finished run")
+        print("[7] Finished run (status='ok')")
 
         # Read it back
         summary = logger.get_run_summary(run_id)

@@ -58,4 +58,4 @@ class FileRun(BaseModel):
     auto_corrected: int = 0
     quarantined: int = 0
     flagged: int = 0
-    status: str = "in_progress"   # in_progress | completed | failed | held_for_hitl
+    status: str = "in_progress"   # in_progress | ok | elevated | held_for_hitl | failed
