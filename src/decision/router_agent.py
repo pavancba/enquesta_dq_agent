@@ -19,10 +19,16 @@ Routing logic by rule
     the raw value; the router leaves corrected_value=None.
 
   R003 (invalid_cibil_comment)
-    confidence >= router.quarantine_min_confidence  -> FLAG_FOR_REVIEW
-    confidence <  threshold                         -> ACCEPT
+    verdict in {"suspicious", "invalid"}            -> FLAG_FOR_REVIEW
+    verdict == "valid" (or unknown)                 -> ACCEPT
     NEVER AUTO_CORRECT — CIBIL_COMMENTS require human business judgment,
-    even at high LLM confidence. This is the explicit Rule 3 contract.
+    regardless of LLM confidence. This is the explicit Rule 3 contract.
+
+    Routing is by VERDICT, not confidence. Confidence is metadata in the
+    decision reasoning string. The prior confidence-threshold gate
+    (router.quarantine_min_confidence) silently dropped legitimate
+    "suspicious" verdicts whose confidence fell below 0.70 — including
+    the mock + live default of 0.60.
 
 Thresholds come from config/settings.yaml -> router.
 
@@ -41,9 +47,6 @@ except ImportError:  # pragma: no cover
     from models.schemas import Finding, Decision, Action, Severity  # type: ignore
 
 
-DEFAULT_QUARANTINE_MIN_CONFIDENCE = 0.70
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -57,33 +60,28 @@ def route_findings(
     Args:
         findings:  Output of the validation layer (schema_validator +
                    rule_engine + anomaly_detector), aggregated.
-        settings:  Parsed config/settings.yaml. Used to read router
-                   thresholds. If None, sensible defaults are used.
+        settings:  Parsed config/settings.yaml. Reserved for future routing
+                   knobs; R003 currently routes purely on Finding.verdict.
 
     Returns:
         A list of Decision objects, one per Finding, in input order.
     """
-    router_cfg = ((settings or {}).get("router") or {})
-    quarantine_min = float(router_cfg.get(
-        "quarantine_min_confidence", DEFAULT_QUARANTINE_MIN_CONFIDENCE,
-    ))
-
     decisions: list[Decision] = []
     for f in findings:
-        decisions.append(_route_one(f, quarantine_min))
+        decisions.append(_route_one(f))
     return decisions
 
 
 # ---------------------------------------------------------------------------
 # Per-rule routing
 # ---------------------------------------------------------------------------
-def _route_one(f: Finding, quarantine_min: float) -> Decision:
+def _route_one(f: Finding) -> Decision:
     if f.rule_id == "R001":
         return _route_r001(f)
     if f.rule_id == "R002":
         return _route_r002(f)
     if f.rule_id == "R003":
-        return _route_r003(f, quarantine_min)
+        return _route_r003(f)
     # Unknown rule: route conservatively to FLAG_FOR_REVIEW so nothing
     # silently auto-corrects on a misconfigured rules.yaml.
     return Decision(
@@ -139,29 +137,35 @@ def _route_r002(f: Finding) -> Decision:
     )
 
 
-def _route_r003(f: Finding, quarantine_min: float) -> Decision:
-    """CIBIL_COMMENTS judgment — never auto-correct."""
-    if f.confidence >= quarantine_min:
-        return Decision(
+def _route_r003(f: Finding) -> Decision:
+    """CIBIL_COMMENTS judgment — routed by LLM verdict, never auto-corrected."""
+    verdict = (f.verdict or "").lower()
+    if verdict in ("suspicious", "invalid"):
+        decision = Decision(
             finding=f,
             action=Action.FLAG_FOR_REVIEW,
             corrected_value=None,
             reasoning=(
-                f"R003 CIBIL_COMMENTS judgment at confidence {f.confidence:.2f} "
-                f">= flag threshold {quarantine_min:.2f}. NEVER auto-corrected; "
-                "flagging for human review and email notification."
+                f"R003 CIBIL_COMMENTS: LLM classified comment as {verdict} "
+                f"(confidence {f.confidence:.2f}). NEVER auto-corrected; "
+                f"flagging for human review and email notification. "
+                f"{f.llm_reasoning or ''}"
+            ).rstrip(),
+        )
+    else:  # "valid" or unknown -> let through
+        decision = Decision(
+            finding=f,
+            action=Action.ACCEPT,
+            corrected_value=None,
+            reasoning=(
+                f"R003 CIBIL_COMMENTS: LLM judged comment as valid "
+                f"(confidence {f.confidence:.2f}). Accepting the value as-is; "
+                "no human action required."
             ),
         )
-    return Decision(
-        finding=f,
-        action=Action.ACCEPT,
-        corrected_value=None,
-        reasoning=(
-            f"R003 CIBIL_COMMENTS judgment at confidence {f.confidence:.2f} "
-            f"below flag threshold {quarantine_min:.2f}. Accepting the value "
-            "as-is; no human action required."
-        ),
-    )
+    # Invariant: R003 must never auto-correct, regardless of inputs.
+    assert decision.action != Action.AUTO_CORRECT, "R003 must never AUTO_CORRECT"
+    return decision
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +288,24 @@ def _self_test() -> int:
     print("    R002 always AUTO_CORRECT: OK")
     print(f"    one decision per finding ({len(decisions)} == {len(all_findings)}): "
           f"{'OK' if len(decisions) == len(all_findings) else 'FAIL'}")
+
+    # Verdict-based routing check: demo_07's showcase synthetic file has two
+    # CIBIL_COMMENTS values (empty + "TEST") that the mock judges as
+    # suspicious/invalid -> both must route to FLAG_FOR_REVIEW now that the
+    # router gates on verdict instead of a 0.70 confidence threshold.
+    r003_flags = [d for d in decisions
+                  if d.finding.rule_id == "R003"
+                  and d.action == Action.FLAG_FOR_REVIEW]
+    r003_accepts = [d for d in decisions
+                    if d.finding.rule_id == "R003"
+                    and d.action == Action.ACCEPT]
+    print(f"    demo_07 R003 FLAG_FOR_REVIEW count == 2: "
+          f"{'OK' if len(r003_flags) == 2 else 'FAIL'} "
+          f"(got flag={len(r003_flags)}, accept={len(r003_accepts)})")
+    assert len(r003_flags) == 2, (
+        f"expected 2 FLAG_FOR_REVIEW decisions for demo_07 R003, "
+        f"got {len(r003_flags)}"
+    )
 
     # demo_07 doesn't trigger R001, so synthesize one of each severity to
     # prove the schema-routing branch.

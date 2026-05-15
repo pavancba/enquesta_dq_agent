@@ -31,8 +31,11 @@ mock_llm:
 router:
   # Confidence thresholds for the Router Agent's decision logic
   auto_correct_min_confidence: 0.90
-  quarantine_min_confidence: 0.70
-  # Below quarantine threshold = flag for human review
+  # DEPRECATED: quarantine_min_confidence is no longer consulted.
+  # R003 now routes by the LLM's VERDICT word (suspicious/invalid -> flag,
+  # valid -> accept), not by a confidence threshold. The previous 0.70 gate
+  # silently dropped suspicious verdicts at the mock/live default of 0.60.
+  # quarantine_min_confidence: 0.70
 
 supervisor:
   # Trip wires — quarantine (data integrity) and flag (LLM workload) are

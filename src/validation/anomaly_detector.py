@@ -446,6 +446,7 @@ def _to_finding(
             f"(confidence {verdict.confidence:.2f}) by {verdict.source}."
         ),
         confidence=verdict.confidence,
+        verdict=verdict.verdict,
         llm_reasoning=verdict.reason,
     )
 
@@ -524,6 +525,13 @@ def _self_test() -> int:
                 run_id=run_id,
                 settings=mode_settings,
             )
+            # Every R003 finding must carry the LLM verdict word so the
+            # router can route on it without parsing prose.
+            for f in findings:
+                assert f.verdict in VALID_VERDICTS, (
+                    f"R003 finding missing verdict (got {f.verdict!r}) "
+                    f"row={f.row_index} value={f.raw_value!r}"
+                )
             audit.finish_run(
                 run_id=run_id,
                 total_rows=stats.total_rows,

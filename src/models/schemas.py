@@ -36,6 +36,9 @@ class Finding(BaseModel):
     severity: Severity
     description: str
     confidence: float = 1.0
+    # R003-only: the LLM's verdict word ("valid"|"suspicious"|"invalid").
+    # The router routes on this, not on confidence — see router_agent._route_r003.
+    verdict: Optional[str] = None
     llm_reasoning: Optional[str] = None   # filled in for R003 (LLM judgments)
 
 
