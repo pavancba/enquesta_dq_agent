@@ -45,8 +45,120 @@ from src.graph.agent_graph import run_agent  # noqa: E402
 # Page config — call once, before anything else renders.
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Enquesta DQ Agent",
+    page_title="Enquesta DQ Agent — City of Wilmington",
     layout="wide",
+)
+
+
+# ---------------------------------------------------------------------------
+# Visual reskin — CSS only. Streamlit defaults are kept, just overlaid with
+# a restrained palette + a handful of utility classes used by the HTML
+# blocks below. No external font loads; uses the system font stack.
+# ---------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+      #MainMenu, footer {visibility: hidden;}
+      .stApp, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                     "Helvetica Neue", Arial, sans-serif;
+        color: #1a2332;
+      }
+      .block-container {padding-top: 1.6rem; max-width: 1280px;}
+
+      .brand-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 18px; margin-bottom: 18px;
+        background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+      }
+      .brand-left {display: flex; align-items: center; gap: 14px;}
+      .brand-logo {
+        width: 40px; height: 40px; border-radius: 10px;
+        background: #2563eb; color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 700; font-size: 20px; letter-spacing: -0.5px;
+      }
+      .brand-title {font-size: 20px; font-weight: 600; line-height: 1.1;}
+      .brand-sub {font-size: 13px; color: #64748b; margin-top: 2px;}
+      .user-pill {display: flex; align-items: center; gap: 10px;}
+      .user-avatar {
+        width: 36px; height: 36px; border-radius: 999px;
+        background: #1a2332; color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 600; font-size: 13px;
+      }
+      .user-name {font-size: 13px; font-weight: 600;}
+      .user-role {font-size: 12px; color: #64748b;}
+
+      .file-strip {
+        font-size: 14px; margin: 6px 0 12px 0;
+        color: #1a2332;
+      }
+      .file-strip b {font-weight: 600;}
+      .file-strip .muted {color: #64748b; font-weight: 400;}
+
+      .status-banner {
+        display: flex; align-items: flex-start; gap: 12px;
+        padding: 14px 16px; border-radius: 10px; margin-bottom: 18px;
+        border: 1px solid transparent;
+      }
+      .status-banner .check {
+        width: 22px; height: 22px; border-radius: 999px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 700; flex-shrink: 0;
+        margin-top: 1px;
+      }
+      .status-banner .body {flex: 1;}
+      .status-banner .title {font-weight: 600; font-size: 14px;}
+      .status-banner .desc {font-size: 13px; margin-top: 2px;}
+      .status-banner.ok       {background: #ecfdf5; border-color: #a7f3d0;}
+      .status-banner.ok .check    {background: #16a34a; color: #fff;}
+      .status-banner.ok .title    {color: #065f46;}
+      .status-banner.ok .desc     {color: #047857;}
+      .status-banner.elevated {background: #fffbeb; border-color: #fde68a;}
+      .status-banner.elevated .check  {background: #d97706; color: #fff;}
+      .status-banner.elevated .title  {color: #92400e;}
+      .status-banner.elevated .desc   {color: #b45309;}
+      .status-banner.held     {background: #fef2f2; border-color: #fecaca;}
+      .status-banner.held .check  {background: #dc2626; color: #fff;}
+      .status-banner.held .title  {color: #991b1b;}
+      .status-banner.held .desc   {color: #b91c1c;}
+
+      .tier-card {
+        background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px;
+        padding: 16px 18px; height: 100%;
+        border-top: 3px solid #cbd5e1;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+      }
+      .tier-card.tier-1       {border-top-color: #2563eb;}
+      .tier-card.tier-2       {border-top-color: #d97706;}
+      .tier-card.tier-anomaly {border-top-color: #dc2626;}
+      .tier-card .label {
+        font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+        color: #64748b; font-weight: 600;
+      }
+      .tier-card .value {
+        font-size: 32px; font-weight: 700; line-height: 1.1;
+        margin-top: 4px; color: #1a2332;
+      }
+      .tier-card .sub {font-size: 13px; color: #64748b; margin-top: 4px;}
+
+      .audit-strip {
+        background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px;
+        padding: 10px 14px; margin: 18px 0;
+        font-size: 13px; color: #475569;
+      }
+      .audit-strip b {color: #1a2332; font-weight: 600;}
+
+      .section-title {
+        font-size: 15px; font-weight: 600; color: #1a2332;
+        margin: 20px 0 8px 0;
+      }
+      .section-title .count {color: #64748b; font-weight: 400;}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -92,6 +204,28 @@ with st.sidebar:
     else:
         st.write("**Email recipient:** _(none configured)_")
     st.write(f"**Email mode:** `{email_cfg.get('mode', 'smtp')}`")
+
+    st.subheader("Inbox watcher")
+    st.toggle(
+        "Auto-process files dropped in inbox",
+        key="watch_enabled",
+        value=st.session_state.get("watch_enabled", False),
+        help=(
+            "When on, any new CSV dropped into the inbox folder is "
+            "automatically picked up and processed by the agent. The "
+            "page polls every 3 seconds; each file is processed only "
+            "once per session."
+        ),
+    )
+    st.caption(f"Inbox: `{INBOX_DIR.relative_to(_PROJECT_ROOT)}`")
+    _inbox_csvs = sorted(INBOX_DIR.glob("*.csv"))
+    if _inbox_csvs:
+        st.markdown(
+            "\n".join(f"- `{p.name}`" for p in _inbox_csvs)
+        )
+    else:
+        st.markdown("_Inbox is empty._")
+
     st.divider()
     st.caption(
         "Audit DB: `audit.db`  \n"
@@ -100,22 +234,52 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------------
-# Header
+# Brand header — left: E logo + title + subtitle.
+#                right: PJ avatar + "P. Jagga · Billing Lead".
 # ---------------------------------------------------------------------------
-st.title("Enquesta Data Quality Agent")
-st.caption("On-prem agentic AI for billing data quality")
-
-
-# ---------------------------------------------------------------------------
-# Drop zone
-# ---------------------------------------------------------------------------
-uploaded = st.file_uploader(
-    "Drag and drop an Enquesta CSV here, or click to browse",
-    type=["csv"],
-    accept_multiple_files=False,
+st.markdown(
+    """
+    <div class="brand-header">
+      <div class="brand-left">
+        <div class="brand-logo">E</div>
+        <div>
+          <div class="brand-title">Enquesta DQ Agent</div>
+          <div class="brand-sub">City of Wilmington · Billing Ops</div>
+        </div>
+      </div>
+      <div class="user-pill">
+        <div>
+          <div class="user-name" style="text-align:right;">P. Jagga</div>
+          <div class="user-role" style="text-align:right;">Billing Lead</div>
+        </div>
+        <div class="user-avatar">PJ</div>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 
+# ---------------------------------------------------------------------------
+# Top nav — three tabs. All existing page content lives in "Daily Run";
+# the other two are placeholders for the roadmap.
+# ---------------------------------------------------------------------------
+tab_daily, tab_health, tab_quality = st.tabs(
+    ["Daily Run", "Pipeline Health", "Data Quality"]
+)
+
+
+with tab_health:
+    st.info("Coming soon — Layer 2 / Layer 3 of the roadmap.")
+with tab_quality:
+    st.info("Coming soon — Layer 2 / Layer 3 of the roadmap.")
+
+
+# ---------------------------------------------------------------------------
+# Helpers — unchanged from the previous revision. The reskin only touches
+# the visual presentation; these utilities stay as-is so the agent flow,
+# session-state guard, and inbox watcher behave identically.
+# ---------------------------------------------------------------------------
 def _bytes_hash(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
@@ -178,228 +342,406 @@ if "last_report" not in st.session_state:
     st.session_state.last_report = None
 if "last_saved_path" not in st.session_state:
     st.session_state.last_saved_path = None
+if "processed_inbox_hashes" not in st.session_state:
+    st.session_state.processed_inbox_hashes = set()
 
-if uploaded is not None:
-    file_bytes = uploaded.getvalue()
-    file_hash = _bytes_hash(file_bytes)
 
-    if file_hash != st.session_state.last_upload_hash:
-        saved_path = INBOX_DIR / uploaded.name
-        saved_path.write_bytes(file_bytes)
+def _scan_inbox_and_process() -> None:
+    """Scan INBOX_DIR for unseen CSVs and run the agent on each."""
+    for path in sorted(INBOX_DIR.glob("*.csv")):
         try:
-            report = _run_agent_with_progress(saved_path)
-            st.session_state.last_upload_hash = file_hash
+            content = path.read_bytes()
+        except OSError:
+            # File may be mid-write; skip and retry on next refresh.
+            continue
+
+        key = (str(path), _bytes_hash(content))
+        if key in st.session_state.processed_inbox_hashes:
+            continue
+
+        st.info(f"New file detected in inbox: `{path.name}` — processing…")
+        try:
+            report = _run_agent_with_progress(path)
+            st.session_state.processed_inbox_hashes.add(key)
+            st.session_state.last_upload_hash = key[1]
             st.session_state.last_report = report
-            st.session_state.last_saved_path = saved_path
+            st.session_state.last_saved_path = path
+            v = report.verdict
+            s = report.summary
+            st.success(
+                f"Processed `{path.name}` — status: {v['status']} · "
+                f"{s['flagged']} flagged · {s['quarantined']} quarantined · "
+                f"{s['clean']} clean of {s['total_rows']} rows"
+            )
         except Exception as e:
-            print(f"[ui] run_agent failed: {e}", file=sys.stderr)
+            print(f"[ui] inbox watch run_agent failed for {path}: {e}",
+                  file=sys.stderr)
             traceback.print_exc()
-            st.error(f"Agent run failed: {e}")
-            with st.expander("Full traceback"):
+            st.error(f"Agent run failed for `{path.name}`: {e}")
+            with st.expander(f"Full traceback — {path.name}"):
                 st.code(traceback.format_exc(), language="text")
+            # Mark as processed so we don't infinite-loop on a broken file.
+            st.session_state.processed_inbox_hashes.add(key)
+
+
+# Inbox watcher + auto-refresh — run OUTSIDE the tabs so it fires
+# regardless of which tab the reviewer is currently looking at.
+if st.session_state.get("watch_enabled"):
+    _scan_inbox_and_process()
+    if st.session_state.get("last_report") is None:
+        # Only poll while we have nothing to show. Once a result is
+        # on screen, stop reloading so the user can actually read it.
+        st.markdown(
+            '<meta http-equiv="refresh" content="3">',
+            unsafe_allow_html=True,
+        )
+        st.caption("👀 Watch mode is ON — scanning inbox every 3s…")
+    else:
+        st.caption(
+            "👀 Watch mode is ON — paused on current result. "
+            "Toggle off and back on to resume scanning."
+        )
 
 
 # ---------------------------------------------------------------------------
-# Result block — render whatever is cached in session_state
+# Daily Run tab — uploader, agent invocation, result rendering, recent runs.
 # ---------------------------------------------------------------------------
-report: Report | None = st.session_state.last_report
-if report is not None:
-    v = report.verdict
-    s = report.summary
-
-    # a) Status banner
-    banner_fn = _status_color(v["status"])
-    quick = (
-        f"{s['flagged']} flagged · {s['quarantined']} quarantined · "
-        f"{s['clean']} clean of {s['total_rows']} total rows"
-    )
-    banner_fn(f"Status: {v['status']} — {quick}")
-
-    # b) Metric tiles
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total rows", s["total_rows"])
-    col2.metric("Clean", s["clean"])
-    col3.metric(
-        "Quarantined",
-        s["quarantined"],
-        delta=(f"{v['quarantine_ratio'] * 100:.1f}% of file"
-               if s["quarantined"] else None),
-        delta_color="inverse",
-    )
-    col4.metric(
-        "Flagged",
-        s["flagged"],
-        delta=(f"{v['flag_ratio'] * 100:.1f}% of file"
-               if s["flagged"] else None),
-        delta_color="off",
+with tab_daily:
+    uploaded = st.file_uploader(
+        "Drag and drop an Enquesta CSV here, or click to browse",
+        type=["csv"],
+        accept_multiple_files=False,
     )
 
-    # c) Full report rendered as Markdown
-    st.markdown(report.as_markdown)
+    if uploaded is not None:
+        file_bytes = uploaded.getvalue()
+        file_hash = _bytes_hash(file_bytes)
 
-    # d) Download buttons — show one per existing output file
-    split_paths_cfg = (SETTINGS.get("paths") or {})
-    saved_path = st.session_state.last_saved_path
-    if saved_path is not None:
-        stem = saved_path.stem
-        suffix = (report.run_id or "")[:8]
-        candidates = [
-            ("Download clean.csv",
-             Path(split_paths_cfg.get("clean", "data/clean"))
-             / f"{stem}_clean_{suffix}.csv",
-             "text/csv"),
-            ("Download quarantine.csv",
-             Path(split_paths_cfg.get("quarantine", "data/quarantine"))
-             / f"{stem}_quarantine_{suffix}.csv",
-             "text/csv"),
-            ("Download flagged.csv",
-             Path(split_paths_cfg.get("flagged", "data/flagged"))
-             / f"{stem}_flagged_{suffix}.csv",
-             "text/csv"),
-        ]
-        present = [(label, p, mime) for label, p, mime in candidates if p.exists()]
-        if present:
-            cols = st.columns(len(present))
-            for col, (label, p, mime) in zip(cols, present):
-                col.download_button(
-                    label=label,
-                    data=p.read_bytes(),
-                    file_name=p.name,
-                    mime=mime,
-                )
+        if file_hash != st.session_state.last_upload_hash:
+            saved_path = INBOX_DIR / uploaded.name
+            saved_path.write_bytes(file_bytes)
+            try:
+                report = _run_agent_with_progress(saved_path)
+                st.session_state.last_upload_hash = file_hash
+                st.session_state.last_report = report
+                st.session_state.last_saved_path = saved_path
+            except Exception as e:
+                print(f"[ui] run_agent failed: {e}", file=sys.stderr)
+                traceback.print_exc()
+                st.error(f"Agent run failed: {e}")
+                with st.expander("Full traceback"):
+                    st.code(traceback.format_exc(), language="text")
 
-    # e) Email notification expander
-    with st.expander("Email notification"):
-        notif = report.notification
-        st.write(f"**Email mode:** `{notif['email_mode']}`")
-        st.write(f"**Email sent:** {notif['email_sent']}")
-        if notif.get("error"):
-            st.warning(f"Notes: {notif['error']}")
-        path = notif.get("email_path")
-        recipients = (SETTINGS.get("email") or {}).get("recipients") or []
-        if notif["email_mode"] == "mock" and path:
-            st.write(f"**.eml file:** `{path}`")
-            body = _read_email_body(path)
-            if body and st.button("View email body", key="view_eml"):
-                st.code(body, language="text")
-        elif notif["email_mode"] == "smtp":
-            st.write(
-                "**Sent to:** "
-                + (", ".join(recipients) if recipients else "(none configured)")
+    # -----------------------------------------------------------------------
+    # Result block — render whatever is cached in session_state.
+    # Visual hierarchy (per Vercel reference):
+    #   1) file-name strip   2) status banner   3) three tier cards
+    #   4) audit-log strip   5) quarantine table   6) corrections table
+    #   7) download buttons   8) email expander
+    # -----------------------------------------------------------------------
+    report: Report | None = st.session_state.last_report
+    if report is not None:
+        v = report.verdict
+        s = report.summary
+
+        auto_count = sum(int(c.get("count", 0)) for c in report.corrections_summary)
+        quar_count = int(s.get("quarantined", 0))
+        flag_count = int(s.get("flagged", 0))
+        clean_count = int(s.get("clean", 0))
+        total_count = int(s.get("total_rows", 0))
+
+        # 1) File-name strip
+        started_at = s.get("started_at") or ""
+        st.markdown(
+            f'<div class="file-strip"><b>{report.file_name}</b> '
+            f'<span class="muted">· arrived {started_at} · '
+            f'processed in {report.duration_seconds:.2f}s</span></div>',
+            unsafe_allow_html=True,
+        )
+
+        # 2) Status banner — green / amber / red depending on verdict
+        status = v.get("status") or "ok"
+        if status == "ok":
+            banner_cls, banner_label, check_glyph = (
+                "ok", "Processed", "✓"
+            )
+        elif status == "elevated":
+            banner_cls, banner_label, check_glyph = (
+                "elevated", "Elevated — review recommended", "!"
+            )
+        elif status == "held_for_hitl":
+            banner_cls, banner_label, check_glyph = (
+                "held", "Held for human-in-the-loop review", "!"
             )
         else:
-            st.write("**Sent to:** _(skipped — no notification required)_")
+            banner_cls, banner_label, check_glyph = (
+                "ok", f"Status: {status}", "·"
+            )
+        one_liner = (
+            f"{total_count} rows in → {auto_count} auto-corrected · "
+            f"{quar_count} quarantined · {flag_count} flagged · "
+            f"{clean_count} clean rows posted"
+        )
+        st.markdown(
+            f'<div class="status-banner {banner_cls}">'
+            f'  <div class="check">{check_glyph}</div>'
+            f'  <div class="body">'
+            f'    <div class="title">{banner_label} — File received and validated</div>'
+            f'    <div class="desc">{one_liner}</div>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-
-# ---------------------------------------------------------------------------
-# Audit history
-# ---------------------------------------------------------------------------
-st.divider()
-st.subheader("Recent runs")
-
-recent = AUDIT.list_recent_runs(limit=20)
-if not recent:
-    st.info("No runs recorded yet. Upload a file above to get started.")
-else:
-    rows = []
-    for r in recent:
-        rows.append({
-            "run_id": (r.get("run_id") or "")[:8],
-            "file_name": r.get("file_name"),
-            "started_at": r.get("started_at"),
-            "status": r.get("status"),
-            "total_rows": r.get("total_rows"),
-            "clean": (
-                (r.get("total_rows") or 0)
-                - (r.get("quarantined") or 0)
-                - (r.get("flagged") or 0)
-            ),
-            "quarantined": r.get("quarantined"),
-            "flagged": r.get("flagged"),
-        })
-    df_recent = pd.DataFrame(rows)
-
-    # Color the status column. Streamlit's Styler renders inline for dataframes.
-    def _style_status(val):
-        if val == "ok":
-            return "background-color: #d4edda; color: #155724"
-        if val == "elevated":
-            return "background-color: #fff3cd; color: #856404"
-        if val == "held_for_hitl":
-            return "background-color: #f8d7da; color: #721c24"
-        if val == "in_progress":
-            return "background-color: #d1ecf1; color: #0c5460"
-        return ""
-
-    styled = df_recent.style.map(_style_status, subset=["status"])
-    st.dataframe(styled, use_container_width=True, hide_index=True)
-
-    # Drill-in
-    choices = {
-        f"{r['run_id'][:8]} — {r['file_name']} ({r['status']})": r["run_id"]
-        for r in recent
-    }
-    selected_label = st.selectbox(
-        "View details for run:",
-        options=["(select a run)"] + list(choices.keys()),
-    )
-    if selected_label != "(select a run)":
-        sel_run_id = choices[selected_label]
-        summary = AUDIT.get_run_summary(sel_run_id)
-        findings = AUDIT.get_findings_summary(sel_run_id)
-        corrections = AUDIT.get_corrections_summary(sel_run_id)
-        llm = AUDIT.get_llm_summary(sel_run_id)
-
-        st.markdown(f"### Run `{sel_run_id[:8]}` — {summary.get('file_name')}")
-
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total rows", summary.get("total_rows", 0))
-        col2.metric("Auto-corrected", summary.get("auto_corrected", 0))
-        col3.metric("Quarantined", summary.get("quarantined", 0))
-        col4.metric("Flagged", summary.get("flagged", 0))
-
-        st.write(f"**Status:** `{summary.get('status')}`")
-        st.write(f"**Started:** {summary.get('started_at')}")
-        st.write(f"**Finished:** {summary.get('finished_at')}")
-
-        c1, c2 = st.columns(2)
+        # 3) Three tier cards in a row
+        c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown("**Findings**")
-            if findings:
-                st.dataframe(pd.DataFrame(findings),
-                             use_container_width=True, hide_index=True)
-            else:
-                st.caption("_No findings recorded._")
+            st.markdown(
+                f'<div class="tier-card tier-1">'
+                f'  <div class="label">Tier 1 — Auto-corrected</div>'
+                f'  <div class="value">{auto_count}</div>'
+                f'  <div class="sub">Trailing-sign fixes</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
         with c2:
-            st.markdown("**Corrections**")
-            if corrections:
-                st.dataframe(pd.DataFrame(corrections),
-                             use_container_width=True, hide_index=True)
+            st.markdown(
+                f'<div class="tier-card tier-2">'
+                f'  <div class="label">Tier 2 — Quarantined</div>'
+                f'  <div class="value">{quar_count}</div>'
+                f'  <div class="sub">Held for billing review</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        with c3:
+            st.markdown(
+                f'<div class="tier-card tier-anomaly">'
+                f'  <div class="label">Anomalies flagged</div>'
+                f'  <div class="value">{flag_count}</div>'
+                f'  <div class="sub">Routed for human review</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        # 4) Audit-log strip — one horizontal row
+        run_id_short = (report.run_id or "")[:24]
+        st.markdown(
+            f'<div class="audit-strip">'
+            f'<b>Audit log</b> · Run ID <b>run_{run_id_short}</b> · '
+            f'{auto_count} corrections logged · {quar_count} holds · '
+            f'{flag_count} escalations · every action signed and timestamped'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # 5) Quarantined rows table — only when there is something to show
+        split_paths_cfg = (SETTINGS.get("paths") or {})
+        saved_path = st.session_state.last_saved_path
+        run_suffix = (report.run_id or "")[:8]
+
+        if quar_count > 0 and saved_path is not None:
+            quar_csv = (
+                Path(split_paths_cfg.get("quarantine", "data/quarantine"))
+                / f"{saved_path.stem}_quarantine_{run_suffix}.csv"
+            )
+            st.markdown(
+                f'<div class="section-title">Quarantined rows '
+                f'<span class="count">— {quar_count} awaiting review</span></div>',
+                unsafe_allow_html=True,
+            )
+            if quar_csv.exists():
+                try:
+                    df_quar = pd.read_csv(quar_csv, dtype=str, keep_default_na=False)
+                    st.dataframe(df_quar, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.caption(f"_Could not read quarantine CSV ({e})._")
             else:
-                st.caption("_No corrections recorded._")
+                st.caption(f"_Quarantine file not found at_ `{quar_csv}`")
 
-        st.markdown("**LLM activity**")
-        if llm.get("count", 0) > 0:
-            lc1, lc2, lc3 = st.columns(3)
-            lc1.metric("LLM calls", llm["count"])
-            lc2.metric("Total latency (ms)", llm["total_ms"])
-            lc3.metric("Avg latency (ms)", f"{llm['avg_ms']:.0f}")
-        else:
-            st.caption("_No LLM calls for this run._")
-
-        # Optional drill into raw LLM call rows — kept compact.
-        with st.expander("Raw LLM call rows"):
+        # 6) Auto-corrections table — only when corrections exist for this run
+        if auto_count > 0:
             with sqlite3.connect(_PROJECT_ROOT / "audit.db") as conn:
                 conn.row_factory = sqlite3.Row
-                raw = [dict(r) for r in conn.execute(
-                    "SELECT call_id, model, latency_ms, "
-                    "       substr(prompt, 1, 80) AS prompt_preview, "
-                    "       substr(response, 1, 120) AS response_preview "
-                    "FROM llm_calls WHERE run_id = ? ORDER BY call_id DESC",
-                    (sel_run_id,),
+                rows_corr = [dict(r) for r in conn.execute(
+                    "SELECT rule_id, row_index, column_name, "
+                    "       value_before, value_after "
+                    "FROM corrections WHERE run_id = ? "
+                    "ORDER BY row_index, column_name",
+                    (report.run_id,),
                 ).fetchall()]
-            if raw:
-                st.dataframe(pd.DataFrame(raw),
-                             use_container_width=True, hide_index=True)
+            st.markdown(
+                f'<div class="section-title">Auto-corrections applied '
+                f'<span class="count">— {auto_count} fixes</span></div>',
+                unsafe_allow_html=True,
+            )
+            if rows_corr:
+                st.dataframe(
+                    pd.DataFrame(rows_corr),
+                    use_container_width=True,
+                    hide_index=True,
+                )
             else:
-                st.caption("_No LLM rows for this run._")
+                st.caption("_No correction rows recorded for this run._")
+
+        # 7) Download buttons — one per existing output file (unchanged)
+        if saved_path is not None:
+            stem = saved_path.stem
+            candidates = [
+                ("Download clean.csv",
+                 Path(split_paths_cfg.get("clean", "data/clean"))
+                 / f"{stem}_clean_{run_suffix}.csv",
+                 "text/csv"),
+                ("Download quarantine.csv",
+                 Path(split_paths_cfg.get("quarantine", "data/quarantine"))
+                 / f"{stem}_quarantine_{run_suffix}.csv",
+                 "text/csv"),
+                ("Download flagged.csv",
+                 Path(split_paths_cfg.get("flagged", "data/flagged"))
+                 / f"{stem}_flagged_{run_suffix}.csv",
+                 "text/csv"),
+            ]
+            present = [(label, p, mime) for label, p, mime in candidates if p.exists()]
+            if present:
+                cols = st.columns(len(present))
+                for col, (label, p, mime) in zip(cols, present):
+                    col.download_button(
+                        label=label,
+                        data=p.read_bytes(),
+                        file_name=p.name,
+                        mime=mime,
+                    )
+
+        # 8) Email notification expander (unchanged behavior)
+        with st.expander("Email notification"):
+            notif = report.notification
+            st.write(f"**Email mode:** `{notif['email_mode']}`")
+            st.write(f"**Email sent:** {notif['email_sent']}")
+            if notif.get("error"):
+                st.warning(f"Notes: {notif['error']}")
+            path = notif.get("email_path")
+            recipients = (SETTINGS.get("email") or {}).get("recipients") or []
+            if notif["email_mode"] == "mock" and path:
+                st.write(f"**.eml file:** `{path}`")
+                body = _read_email_body(path)
+                if body and st.button("View email body", key="view_eml"):
+                    st.code(body, language="text")
+            elif notif["email_mode"] == "smtp":
+                st.write(
+                    "**Sent to:** "
+                    + (", ".join(recipients) if recipients else "(none configured)")
+                )
+            else:
+                st.write("**Sent to:** _(skipped — no notification required)_")
+
+    # -----------------------------------------------------------------------
+    # Audit history — unchanged from the previous revision.
+    # -----------------------------------------------------------------------
+    st.divider()
+    st.subheader("Recent runs")
+
+    recent = AUDIT.list_recent_runs(limit=20)
+    if not recent:
+        st.info("No runs recorded yet. Upload a file above to get started.")
+    else:
+        rows = []
+        for r in recent:
+            rows.append({
+                "run_id": (r.get("run_id") or "")[:8],
+                "file_name": r.get("file_name"),
+                "started_at": r.get("started_at"),
+                "status": r.get("status"),
+                "total_rows": r.get("total_rows"),
+                "clean": (
+                    (r.get("total_rows") or 0)
+                    - (r.get("quarantined") or 0)
+                    - (r.get("flagged") or 0)
+                ),
+                "quarantined": r.get("quarantined"),
+                "flagged": r.get("flagged"),
+            })
+        df_recent = pd.DataFrame(rows)
+
+        # Color the status column. Streamlit's Styler renders inline.
+        def _style_status(val):
+            if val == "ok":
+                return "background-color: #d4edda; color: #155724"
+            if val == "elevated":
+                return "background-color: #fff3cd; color: #856404"
+            if val == "held_for_hitl":
+                return "background-color: #f8d7da; color: #721c24"
+            if val == "in_progress":
+                return "background-color: #d1ecf1; color: #0c5460"
+            return ""
+
+        styled = df_recent.style.map(_style_status, subset=["status"])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        # Drill-in
+        choices = {
+            f"{r['run_id'][:8]} — {r['file_name']} ({r['status']})": r["run_id"]
+            for r in recent
+        }
+        selected_label = st.selectbox(
+            "View details for run:",
+            options=["(select a run)"] + list(choices.keys()),
+        )
+        if selected_label != "(select a run)":
+            sel_run_id = choices[selected_label]
+            summary = AUDIT.get_run_summary(sel_run_id)
+            findings = AUDIT.get_findings_summary(sel_run_id)
+            corrections = AUDIT.get_corrections_summary(sel_run_id)
+            llm = AUDIT.get_llm_summary(sel_run_id)
+
+            st.markdown(f"### Run `{sel_run_id[:8]}` — {summary.get('file_name')}")
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total rows", summary.get("total_rows", 0))
+            col2.metric("Auto-corrected", summary.get("auto_corrected", 0))
+            col3.metric("Quarantined", summary.get("quarantined", 0))
+            col4.metric("Flagged", summary.get("flagged", 0))
+
+            st.write(f"**Status:** `{summary.get('status')}`")
+            st.write(f"**Started:** {summary.get('started_at')}")
+            st.write(f"**Finished:** {summary.get('finished_at')}")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Findings**")
+                if findings:
+                    st.dataframe(pd.DataFrame(findings),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption("_No findings recorded._")
+            with c2:
+                st.markdown("**Corrections**")
+                if corrections:
+                    st.dataframe(pd.DataFrame(corrections),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption("_No corrections recorded._")
+
+            st.markdown("**LLM activity**")
+            if llm.get("count", 0) > 0:
+                lc1, lc2, lc3 = st.columns(3)
+                lc1.metric("LLM calls", llm["count"])
+                lc2.metric("Total latency (ms)", llm["total_ms"])
+                lc3.metric("Avg latency (ms)", f"{llm['avg_ms']:.0f}")
+            else:
+                st.caption("_No LLM calls for this run._")
+
+            # Optional drill into raw LLM call rows — kept compact.
+            with st.expander("Raw LLM call rows"):
+                with sqlite3.connect(_PROJECT_ROOT / "audit.db") as conn:
+                    conn.row_factory = sqlite3.Row
+                    raw = [dict(r) for r in conn.execute(
+                        "SELECT call_id, model, latency_ms, "
+                        "       substr(prompt, 1, 80) AS prompt_preview, "
+                        "       substr(response, 1, 120) AS response_preview "
+                        "FROM llm_calls WHERE run_id = ? ORDER BY call_id DESC",
+                        (sel_run_id,),
+                    ).fetchall()]
+                if raw:
+                    st.dataframe(pd.DataFrame(raw),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.caption("_No LLM rows for this run._")

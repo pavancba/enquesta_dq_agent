@@ -30,6 +30,16 @@ Routing logic by rule
     "suspicious" verdicts whose confidence fell below 0.70 — including
     the mock + live default of 0.60.
 
+  R004 (duplicate_row)
+    Always                                          -> QUARANTINE
+    First occurrence is not flagged at all (rule_engine keeps it).
+    Subsequent occurrences are held for billing review.
+
+  R005 (invalid_state_code)
+    Always                                          -> QUARANTINE
+    Out-of-allow-list state values almost always indicate an upstream
+    parsing error; a human needs to repair the row before it ships.
+
 Thresholds come from config/settings.yaml -> router.
 
 Run this file directly to self-test:
@@ -82,6 +92,10 @@ def _route_one(f: Finding) -> Decision:
         return _route_r002(f)
     if f.rule_id == "R003":
         return _route_r003(f)
+    if f.rule_id == "R004":
+        return _route_r004(f)
+    if f.rule_id == "R005":
+        return _route_r005(f)
     # Unknown rule: route conservatively to FLAG_FOR_REVIEW so nothing
     # silently auto-corrects on a misconfigured rules.yaml.
     return Decision(
@@ -166,6 +180,36 @@ def _route_r003(f: Finding) -> Decision:
     # Invariant: R003 must never auto-correct, regardless of inputs.
     assert decision.action != Action.AUTO_CORRECT, "R003 must never AUTO_CORRECT"
     return decision
+
+
+def _route_r004(f: Finding) -> Decision:
+    """Duplicate-row — always quarantine the dupe; original passed through."""
+    return Decision(
+        finding=f,
+        action=Action.QUARANTINE,
+        corrected_value=None,
+        reasoning=(
+            "R004 duplicate_row: an earlier row with the same key columns "
+            "already passed through to the clean bucket. This copy is held "
+            "for billing review so the account isn't billed twice."
+        ),
+    )
+
+
+def _route_r005(f: Finding) -> Decision:
+    """Invalid state code — quarantine for human repair."""
+    raw = f.raw_value or ""
+    return Decision(
+        finding=f,
+        action=Action.QUARANTINE,
+        corrected_value=None,
+        reasoning=(
+            f"R005 invalid_state_code: ADDR_STATE={raw!r} is not a valid US "
+            "state / territory code. Likely an upstream parsing error (e.g. "
+            "a city or address fragment landed in the state field). Held for "
+            "human repair before downstream load."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

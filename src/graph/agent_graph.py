@@ -479,8 +479,11 @@ def _self_test() -> int:
 
     assert isinstance(report_07, Report), "run_agent must return a Report"
     assert report_07.as_text, "as_text must be non-empty"
-    assert report_07.summary["clean"] == 8
-    assert report_07.summary["quarantined"] == 0
+    # demo_07 contains an exact-duplicate pair (DAVIS LINDA rows 7 & 8);
+    # with R004 active, the second occurrence is quarantined, so the
+    # clean bucket drops from 8 to 7 and quarantine rises from 0 to 1.
+    assert report_07.summary["clean"] == 7
+    assert report_07.summary["quarantined"] == 1
     assert report_07.summary["flagged"] == 2
     # 2 R002 corrections expected
     correction_rows = [r for r in report_07.corrections_summary

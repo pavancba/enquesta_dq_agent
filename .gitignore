@@ -43,3 +43,10 @@ logs/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local backups (working copies kept on disk, not source)
+*.bak
+*.bak/
+*.bak2
+config.bak/
+src.bak/

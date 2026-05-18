@@ -141,20 +141,56 @@ rules:
         - llm_reasoning
         - audit_log_reference
 
+  # ---------------------------------------------------------------------------
+  # RULE 4 — Exact-duplicate row detection
+  # Frequency in archive: 73 of 206 files (35.8%) | 163 duplicate rows total.
+  # Same ACCOUNTNUMBER + CIBL_INVOICE + billing date + amounts appearing
+  # twice in one file. First occurrence is kept; every later copy is
+  # quarantined so the account isn't billed twice.
+  # ---------------------------------------------------------------------------
+  - rule_id: R004
+    name: duplicate_row
+    type: duplicate_row
+    description: >
+      A row is an exact duplicate of an earlier row in the same file when
+      compared on its key columns (account + invoice + billing date +
+      amounts). The first occurrence passes through; every subsequent
+      occurrence is held for billing review.
+    key_columns:
+      - ACCOUNTNUMBER
+      - CIBL_INVOICE
+      - CIBL_BILLING_DATE
+      - CIBL_AMT_5
+      - CIBL_AMT_95
+    severity: high
+    auto_correctable: false
+    action: quarantine
+
+  # ---------------------------------------------------------------------------
+  # RULE 5 — Invalid US state code in ADDR_STATE
+  # Frequency in archive: 13 of 206 files (6.4%) | 23 rows.
+  # Non-US-state values in ADDR_STATE (e.g. "WILMINGTON" — a city that
+  # got shifted into the state column by an upstream parsing error).
+  # ---------------------------------------------------------------------------
+  - rule_id: R005
+    name: invalid_state_code
+    type: value_in_allowed_set
+    description: >
+      ADDR_STATE must be a recognized US state, DC, or inhabited territory
+      code. Out-of-list values almost always indicate an upstream parsing
+      error and need a human to repair the row before it ships downstream.
+      Blank values are intentionally NOT flagged here — they belong to a
+      future missing-required-fields rule.
+    applies_to_columns:
+      - ADDR_STATE
+    severity: high
+    auto_correctable: false
+    action: quarantine
+
 # =============================================================================
 # Future rules — scoped from real data analysis (206 files / 4,457 rows)
 # Ready to enable once business rules are confirmed with the billing team.
 # =============================================================================
-# Rule 4: duplicate_row_detection
-#   Frequency: 73 of 206 files (35.8%) | 163 duplicate rows total
-#   Same ACCOUNTNUMBER + CIBL_INVOICE + amounts appearing twice in one file
-#   Recommended action: quarantine
-#
-# Rule 5: invalid_state_code
-#   Frequency: 13 of 206 files (6.4%) | 23 rows
-#   Non-US-state values in ADDR_STATE (e.g. "WILMINGTON" — a city)
-#   Recommended action: quarantine (clear data-entry error)
-#
 # Rule 6: invalid_class_format
 #   Frequency: 14 of 206 files (6.9%) | 25 rows
 #   CIBL_CLASS1 values not matching the standard 0000000XXX pattern
