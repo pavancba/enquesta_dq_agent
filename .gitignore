@@ -25,10 +25,12 @@ env/
 
 # Runtime artifacts (these are generated, not source)
 audit.db
+data/inbox/*
 data/clean/*
 data/quarantine/*
 data/flagged/*
 data/sent_emails/*
+!data/inbox/.gitkeep
 !data/clean/.gitkeep
 !data/quarantine/.gitkeep
 !data/flagged/.gitkeep
